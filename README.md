@@ -24,7 +24,8 @@ thermal control, the Goldshell cloud removed and the miner's internal ports lock
   presets with their own fan curves.
 - **Per-chip clock trims:** run single weak chips slower (down to −100 MHz) or strong chips faster (up to
   +50 MHz) than the rest of their board. Built on per-chip clock code already in the miner that Goldshell
-  never switched on, with built-in self-tests that prove each trim reaches the chip it names.
+  never switched on. Self-tests on real miners proved that each trim reaches the chip it names and how the
+  chips share power (they were built in from v1.4.2 to v1.5.20).
 - **Safety first:** board voltage never goes above PV 9600; a thermal guard steps up fans, throttles the
   clock and finally puts the miner on Idle with a timed cool-down; Goldshell's fan check is kept and can be
   fitted to your own fans; mining locks on Idle after a fan failure.
@@ -48,13 +49,13 @@ Open `http://<miner-ip>/` in any browser (also on port 8080, and https on 443).
 | Tab | What it does |
 |---|---|
 | **Dashboard** | live hashrate (the boards' own figures, no lag after a restart), power and J/TH, temperatures, fans and shares; 24-hour hashrate chart with restarts, setting changes and rejected shares marked; per-chip map of all 184 chips; per-board cards; best-share record |
-| **Controls & fan** | clock and board voltage (PV 9100–9600, the range the supply really delivers); auto fan with curves down to 10 % (built-in, your own and tuner-made, all editable); fan pair offset for quieter fans; Goldshell's fan check fitted to your own fans; thermal guard |
+| **Controls & fan** | clock and board voltage (PV 9100–9600, the range the supply really delivers); auto fan with curves down to 10 % (built-in, your own and tuner-made, all editable); fan pair offset for quieter fans; Goldshell's fan check fitted to your own fans; thermal guard; chip trims (by hand, auto-trim, find strong chips, ⤓ Save report) |
 | **Presets** | saved clock, voltage and fan settings, applied in one click; built-in Stock and Idle |
 | **Schedule** | paint presets onto a week in half-hour blocks (cheap and expensive hours, quiet nights); scheduled restarts |
 | **Pools** | add, edit, reorder and remove pools; the pool guard watches that the miner only mines to these |
 | **Tuner** | maps clock against board voltage, confirms the best setting, can trim weak chips, builds tested presets; a live run plan shows every step |
 | **Log** | live miner log, colour-coded; optional verbose mode with every share and the pool's answer; save the logs, or a copy with private details taken out |
-| **Settings** | firmware update, password, SSH, network and MAC address, chip trims and their self-tests, power calibration with a wall meter, time zone, notifications, restart and reboot |
+| **Settings** | firmware update, password, SSH, network and MAC address, power calibration with a wall meter, time zone, notifications, restart and reboot |
 
 ### Dashboard
 
@@ -128,7 +129,8 @@ installed or rolled back, a new best share, and more. Each event can be switched
 ## Chip trims
 
 Each SC Lite hash board has 46 chips. Normally every chip runs at its board's clock, so the whole board ends
-up set for its weakest chip. A **chip trim** runs one chip at a different clock from the rest of its board:
+up set for its weakest chip. A **chip trim** runs one chip at a different clock from the rest of its board
+(Controls & fan → Chip trims):
 
 - **slower (−12.5 to −100 MHz)** for a chip that makes more errors than the others, so the rest of the board
   can run faster or at a lower voltage;
@@ -141,38 +143,31 @@ The library sets the trimmed chips using the program's own per-chip function, ra
 With trims switched off, Goldshell's unmodified program runs. If the trimmed copy fails to start, the
 firmware falls back to stock by itself.
 
-![Chip trims, with chip pairs in blue boxes](docs/screenshots/chip-trims-pairs.png)
+![Chip trims in Controls: one row per board, opened to show the chip pairs in blue boxes](docs/screenshots/chip-trims-pairs.png)
 
 **Chip pairs.** The board voltage (PV, about 9.4 V) runs through **23 power stages in series**, two chips side
 by side in each (about 0.41 V per stage). A test by christhealien on his own miner showed which two share a
 stage: with chips 2, 6, 10 … slowed, the whole board made slightly less good work, except the chip just before
 each slowed one, which kept its rate because it got the voltage its partner gave up. That points to pairs
-**1–2, 3–4, 5–6 …**, shown as blue boxes, and three self-tests on his miner have since confirmed it (see
+**1–2, 3–4, 5–6 …**, shown as blue boxes, and three self-tests on his miner later confirmed it (see
 [Measured data](#chip-trims-1)). A − trim gives a chip's partner a small boost; a + trim takes a little from it.
 
 **Helpers:**
 
 - **Auto-trim** watches each chip's errors and slows a board's worst chips one step at a time, undoing any
-  step that doesn't help.
-- **The tuner** can trim the chip that fails a test instead of raising the board voltage.
+  step that doesn't help. It trims **at most one chip per pair**, and stops adding trims to a board whose
+  untrimmed chips start erroring more (then raising PV a step is the better fix).
+- **The tuner** can trim the chip that fails a test instead of raising the board voltage, also one per pair.
 - **Find strong chips** raises up to 10 of a board's cleanest chips +12.5 MHz at a time, up to +50, never
   both chips of one pair, and keeps what passes.
 
-![Self-tests](docs/screenshots/chip-self-tests.png)
+**The self-tests** (v1.4.2 to v1.5.20) switched test trims on and off every 15 minutes for hours and compared
+each chip with itself, trims on against trims off. They settled that a trim reaches the chip it names and that
+chips 1–2, 3–4 … share a power stage (results under [Measured data](#chip-trims-1)), so they were removed in
+v1.5.21. Updating during a test puts your own trims back.
 
-**Self-tests** switch test trims on and off every 15 minutes for hours and compare each chip with itself,
-trims on against trims off, so pool luck and chip-to-chip differences cancel out. They answer only once the
-result is clear by 3 standard errors.
-
-| Test | Answers |
-|---|---|
-| Does a trim reach the chip it names? | trims land on the right chip |
-| Check the chip pairs | pairs are 1–2, 3–4 … or one chip off |
-| Find the pair layout across the whole board | neighbours (1–2), one off (2–3), or across the halves (1–24) |
-| Both chips of a pair | does trimming both chips of a stage cost the other chips more? |
-
-Every result goes into **⤓ Save report**. We're collecting results from many miners to settle the pair
-layout: please share yours.
+**⤓ Save report** on the Chip trims card saves one file with the trims, every chip's clock, nonce counts and
+errors, 48 hours of history, the library's log, auto-trim and Find strong chips: send it in for a look.
 
 ---
 
@@ -222,10 +217,13 @@ Measured with a multimeter on the supply rail:
   | Trim reaches its chip (c2, c6 … at −50 MHz) | passed; the chip *before* each kept its rate (+0.3 %) while the rest of the board dipped 11 % |
   | Check the chip pairs (c1, c5 …) | confirmed; the chip *after* each kept its rate (−0.4 %) while the rest dipped 10 % (4.5 standard errors) |
   | Pair layout across the board (12 h) | blue-box partners +9.4 % against the rest (11.8 standard errors); one chip off +2.6 %; across the halves −0.7 % |
+  | Check the chip pairs, again (v1.5.20) | confirmed; the chip *after* each +1.7 % while the rest dipped 6.5 % |
+  | Both chips of a pair (c1+c2, c9+c10 …) | the rest of the board dipped **16.4 %**, against 6.5 % with the same 12 chips spread one per pair |
 
-  At that voltage, slowing 12 of a board's 46 chips by 50 MHz cost every other chip about 10 % of its good
-  work: on a miner near its voltage floor, several trims on one board hurt the untrimmed chips, so raise PV a
-  step instead of adding trims.
+  Slowing chips takes good work from every other chip, and **trimming both chips of a pair costs the rest of
+  the board clearly more** than spreading the same trims one per pair (16.4 % against 6.5 %, 6 standard
+  errors). So: one trim per pair where you can, and on a miner near its voltage floor raise PV a step instead of
+  adding trims.
 
 ---
 
@@ -306,7 +304,7 @@ Unpack it and flash the `.img` inside the same way as this firmware.
 - Per-chip clocking and the boards' power stages (see [Chip trims](#chip-trims)).
 
 Contributions are welcome: open an Issue for findings or a Pull Request for documentation and tools.
-Self-test reports from **Settings → Chip trims → ⤓ Save report** are especially welcome.
+Chip reports from **Controls & fan → Chip trims → ⤓ Save report** are especially welcome.
 Please don't publish passwords, private keys, device credentials or personal information.
 
 ## Disclaimer
