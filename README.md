@@ -26,12 +26,20 @@ thermal control, the Goldshell cloud removed and the miner's internal ports lock
   +50 MHz) than the rest of their board. Built on per-chip clock code already in the miner that Goldshell
   never switched on. Self-tests on real miners proved that each trim reaches the chip it names and how the
   chips share power (they were built in from v1.4.2 to v1.5.20).
-- **Safety first:** board voltage never goes above PV 9600; a thermal guard steps up fans, throttles the
-  clock and finally puts the miner on Idle with a timed cool-down; Goldshell's fan check is kept and can be
-  fitted to your own fans; mining locks on Idle after a fan failure.
-- **Mines only where you say:** a pool guard stops the miner if it ever runs a pool that isn't in your Pools tab.
-- **Private by default:** the Goldshell cloud is cut off, the miner's internal API is no longer on the network,
-  and log exports for sharing take out pool accounts, wallet, addresses and secrets.
+- **Safety first:** board voltage never goes above PV 9600; a thermal guard steps up fans, can throttle the
+  clock (if you switch that on) and finally puts the miner on Idle with a timed cool-down; Goldshell's fan
+  check is kept (and made stricter about a fan that has already died) and can be fitted to your own fans;
+  mining locks on Idle after a fan failure.
+- **Mines only where you say:** a pool can't move the miner to another server, and a pool guard takes any
+  pool or account that isn't in your Pools tab off the running miner (and holds it on Idle if it keeps
+  coming back, or while the Pools tab is empty).
+- **Private by default:** the Goldshell cloud is cut off, the miner's internal API is no longer on the
+  network, and Goldshell's internet check asks the miner itself instead of outside hosts. The internet is
+  only reached for what you use: update checks, notifications, and public time servers as a last resort
+  (switch those off in Settings → Time). Log exports for sharing take out pool addresses and accounts,
+  wallet, worker and miner names, IP and MAC addresses and secrets.
+- **Your password stays yours:** stored as PBKDF2-HMAC-BLAKE2b-512 (the SC Lite's own hash), the same for
+  the panel and SSH; changing the username or password needs the current password.
 - **Updates without an SD card**, with automatic roll-back if the new version doesn't start properly.
 
 <table>
@@ -51,11 +59,11 @@ Open `http://<miner-ip>/` in any browser (also on port 8080, and https on 443).
 | **Dashboard** | live hashrate (the boards' own figures, no lag after a restart), power and J/TH, temperatures, fans and shares; 24-hour hashrate chart with restarts, setting changes and rejected shares marked; per-chip map of all 184 chips; per-board cards; best-share record |
 | **Controls & fan** | clock and board voltage (PV 9100–9600, the range the supply really delivers); auto fan with curves down to 10 % (built-in, your own and tuner-made, all editable); fan pair offset for quieter fans; Goldshell's fan check fitted to your own fans; thermal guard; chip trims (by hand, auto-trim, find strong chips, ⤓ Save report) |
 | **Presets** | saved clock, voltage and fan settings, applied in one click; built-in Stock and Idle |
-| **Schedule** | paint presets onto a week in half-hour blocks (cheap and expensive hours, quiet nights); scheduled restarts |
+| **Schedule** | paint presets onto a week in half-hour blocks (cheap and expensive hours, quiet nights); scheduled restarts (each one reboots the miner) |
 | **Pools** | add, edit, reorder and remove pools; the pool guard watches that the miner only mines to these |
 | **Tuner** | maps clock against board voltage, confirms the best setting, can trim weak chips, builds tested presets; a live run plan shows every step |
 | **Log** | live miner log, colour-coded; optional verbose mode with every share and the pool's answer; save the logs, or a copy with private details taken out |
-| **Settings** | firmware update, password, SSH, network and MAC address, power calibration with a wall meter, time zone, notifications, restart and reboot |
+| **Settings** | firmware update and roll back, username and password, SSH, network and MAC address, power calibration with a wall meter, time zone and time servers, notifications, restart and reboot (on this firmware Restart mining reboots the miner too), an automatic restart when a board stops hashing |
 
 ### Dashboard
 
@@ -89,7 +97,7 @@ the miner goes to Idle to cool down and tells you why.
 ![Weekly schedule](docs/screenshots/schedule.png)
 
 Paint presets onto the week: full power at night, a lower-power preset during expensive hours, a quiet one
-at weekends. Restarts can be scheduled too.
+at weekends. Restarts can be scheduled too: on this firmware a restart reboots the whole miner (1–2 minutes).
 
 ### Tuner
 
@@ -140,8 +148,10 @@ up set for its weakest chip. A **chip trim** runs one chip at a different clock 
 chip, but always sets them all to the board clock; its own per-chip tuning code is never called. The firmware
 adds a 34-byte hook, placed in that unused code, which calls a small library right after each clock change.
 The library sets the trimmed chips using the program's own per-chip function, ramping them in small steps.
-With trims switched off, Goldshell's unmodified program runs. If the trimmed copy fails to start, the
-firmware falls back to stock by itself.
+With trims switched off, the same copy runs without the library: Goldshell's program plus two small guards
+(a board that answers with 0 chips, and bad input from a pool, no longer stop all four boards). If that
+copy fails to start three times in a row, the firmware falls back to Goldshell's unmodified program by
+itself.
 
 ![Chip trims in Controls: one row per board, opened to show the chip pairs in blue boxes](docs/screenshots/chip-trims-pairs.png)
 
@@ -234,10 +244,12 @@ Measured with a multimeter on the supply rail:
 | Web panel | Goldshell UI on port 80 | new panel on 80, 8080 and https 443 |
 | Goldshell backend and miner API (4028) | open to the network | reachable only from inside the miner |
 | Goldshell cloud | on (hub.goldshell.com) | cut off |
-| Login | shared default password | `admin` / `admin`, then you must choose a new one |
+| Login | shared default password | `admin` / `admin`, then you must choose a new one; stored as PBKDF2-HMAC-BLAKE2b-512; changing it needs the current password |
+| Internet check | every 3 s: your pool's host (a DNS lookup each time), then www.baidu.com and www.google.com | asks the panel on the miner (127.0.0.2); the pools only if that fails; no outside hosts |
+| Pool redirects | a pool can move the miner to another server | refused; the pool guard removes any pool that isn't in your Pools tab |
 | Wi-Fi, mDNS, test programs | installed | removed (the board has no Wi-Fi chip) |
-| SSH | none | built in on port 22, using the panel's username and password (shell, `scp`, `sftp`) |
-| Time sync | servers in China, time zone fixed to China | your own time server, your router's (DHCP), or pool.ntp.org; works without internet; time zone from your browser |
+| SSH | none | built in on port 22, using the panel's username and password (shell, `sftp`, and `scp` from OpenSSH 9 or later) |
+| Time sync | servers in China, time zone fixed to China | your own time server and your router's (DHCP); pool.ntp.org only when neither gives a time (can be switched off); works without internet; time zone from your browser |
 | MAC address | random at every boot on some units (the board can't store it) | kept the same by default; or random each boot, or one you choose |
 | Tuning | fixed power plans | auto-tuner, presets, schedule, per-chip trims |
 | Fans | fixed modes | curves down to 10 %, fan pair offset, thermal guard with a cool-down |
@@ -247,13 +259,17 @@ Measured with a multimeter on the supply rail:
 
 ## Install
 
-1. Write the `.img.xz` to a microSD card with **balenaEtcher**. Other tools need it unpacked first with
+1. Download the `.img.xz` and `SHA256SUMS` from the release and check the image:
+   `sha256sum -c SHA256SUMS --ignore-missing` (macOS: `shasum -a 256 <file>.img.xz`,
+   Windows: `certutil -hashfile <file>.img.xz SHA256`, and compare with its line in `SHA256SUMS`). It must
+   say `OK` (or match); if not, download it again.
+   Write the `.img.xz` to a microSD card with **balenaEtcher**. Other tools need it unpacked first with
    `xz -dk` or 7-Zip.
 2. Miner **off**, insert the card, power **on**.
 3. Red and green blink while it writes (about 2 min). When **only green blinks**, pull the card; the
    miner reboots by itself.
-4. Open `http://<miner-ip>/`, sign in with `admin` / `admin`, and set your password. The same
-   username and password work for SSH: `ssh <username>@<miner-ip>`.
+4. Open `http://<miner-ip>/`, sign in with `admin` / `admin`, set your password and read the risk
+   notice. The same username and password work for SSH: `ssh <username>@<miner-ip>`.
 5. Add your pool in the **Pools** tab. Mining starts within about a minute.
 
 ### Upgrading (no SD card)
@@ -274,6 +290,12 @@ balanced curve if it followed a preset. Pools, password, network, fan settings a
 Settings → Firmware update shows what was done and has a button to put the old presets back. Then run the
 Tuner to build new ones.
 
+**Passwords from v1.5.22 on.** Your password keeps working: it moves to the new format
+(PBKDF2-HMAC-BLAKE2b-512) the first time you sign in once the update is confirmed. Versions before v1.5.22
+can't read that format, so **Roll back to the previous version**, or installing an older release's update
+package, asks for your password once and saves it the old way. An older release flashed from an SD card
+finds no password it can read and starts over at `admin` / `admin`.
+
 v1.4.5 and v1.4.6 were withdrawn: their panel didn't start. If you flashed one, flash the latest release
 from an SD card.
 
@@ -284,7 +306,8 @@ The full steps, troubleshooting and how to go back to stock are in the
 
 The release includes the control panel's source (Go) and the build kit, which turns Goldshell's stock
 2.2.0 image into the sclite image. It only accepts the known stock image and checks every edit. Every
-release is checked to rebuild byte for byte from its published source. See the release notes for the
+release is checked to rebuild byte for byte from its published source (with the Go version named in the
+release notes: another Go version builds a different panel binary). See the release notes for the
 commands. The build needs the stock `.img` from the stock-2.2.0 release.
 
 ## Stock firmware 2.2.0
