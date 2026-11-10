@@ -1,339 +1,133 @@
-# SC Lite Community Firmware
+# SC Lite firmware with the sclite agent
 
-Community firmware for the **SC Lite** ASIC miner made by Goldshell (Blake2b / Siacoin, control board
-**MCB_V4_3**): a new control panel, a hardware-aware auto-tuner, per-chip clock trims, smarter fan and
-thermal control, the Goldshell cloud removed and the miner's internal ports locked down.
+Builds an SD-card burn image from Goldshell's stock SC Lite image, with the sclite agent built in
+and Goldshell's extras removed.
 
-> Independent project: not affiliated with, endorsed by or supported by Goldshell.
+```
+python3 build.py --stock burn-Goldshell-SCLITE_MCB_V4_3-2_2_0.img \
+                 --agent sclite-agent-arm \
+                 --out burn-Goldshell-SCLITE_MCB_V4_3-2_2_0-sclite.img --xz
+```
 
-**[⬇ Download the latest release](../../releases/latest)** · [What's new](../../releases/latest) ·
-[Install](#install) · [Upgrade without an SD card](#upgrading-no-sd-card) · [Measured data](#measured-data)
+Build the agent first (from `agent/`, Go 1.24+, no downloads needed):
 
-![The dashboard: live hashrate, power, temperature, shares, 24-hour chart](docs/screenshots/dashboard.png)
+```
+CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -trimpath -buildvcs=false -ldflags="-s -w" -o sclite-agent-arm .
+```
 
-<sub>Screenshots in this README come from a test setup with demo data (example pools, a demo wallet).</sub>
+The build is reproducible: file times and the build date are pinned (override with `SOURCE_DATE_EPOCH`),
+so the same stock image and agent give the same image byte for byte.
 
----
+Needs python3 and e2fsprogs. The three small ARM helpers (the port library, the intminer wrapper and the
+chip-trim library) come prebuilt and tested in `files/*.bin`; `--rebuild-helpers` compiles them from `files/*.c` with clang + ld.lld (clang 18 gives the same bytes). Tested on stock 2.2.0
+(sha256 `27051af0…df0bfe`). On any other version every edit checks that what it replaces is there,
+and the build stops instead of producing a half-modified image.
 
-## Highlights
+Before an image is written, the build also checks the result:
+- **Room:** all removals are applied first, then it checks the new files fit, then writes them. (debugfs
+  doesn't fail on a full filesystem: it leaves the rest of the file as zeros and exits 0. That broke
+  v1.4.5 and v1.4.6, whose agent was written before the removals and didn't fit.) Any error debugfs
+  prints stops the build.
+- **Read back:** every written file is read back from the filesystem and compared (sha256).
+- **Startup:** the agent is started from the finished filesystem 5 times under qemu-arm, in a chroot of
+  the image's own files; each run must serve the panel and not crash. Needs root, `unshare` and a static
+  qemu-arm (`qemu-user-static`, or `QEMU_ARM=path`); `--skip-startup-check` skips it (not for releases).
 
-- **A new control panel** for desktop and phone: dashboard, clock and voltage, fan curves, presets, a weekly
-  schedule, pools, an auto-tuner, live logs and notifications. Light and dark themes.
-- **An auto-tuner that measures, not guesses.** It maps every clock at the lowest board voltage that runs
-  clean, judges each chip by its own error rate, confirms the winner over a longer test, and builds tested
-  presets with their own fan curves.
-- **Per-chip clock trims:** run single weak chips slower (down to −100 MHz) or strong chips faster (up to
-  +50 MHz) than the rest of their board. Built on per-chip clock code already in the miner that Goldshell
-  never switched on. Self-tests on real miners proved that each trim reaches the chip it names and how the
-  chips share power (they were built in from v1.4.2 to v1.5.20).
-- **Safety first:** board voltage never goes above PV 9600; a thermal guard steps up fans, can throttle the
-  clock (if you switch that on) and finally puts the miner on Idle with a timed cool-down; Goldshell's fan
-  check is kept (and made stricter about a fan that has already died) and can be fitted to your own fans;
-  mining locks on Idle after a fan failure.
-- **Mines only where you say:** a pool can't move the miner to another server, and a pool guard takes any
-  pool or account that isn't in your Pools tab off the running miner (and holds it on Idle if it keeps
-  coming back, or while the Pools tab is empty).
-- **Private by default:** the Goldshell cloud is cut off, the miner's internal API is no longer on the
-  network, and Goldshell's internet check asks the miner itself instead of outside hosts. The internet is
-  only reached for what you use: update checks, notifications, and public time servers as a last resort
-  (switch those off in Settings → Time). Log exports for sharing take out pool addresses and accounts,
-  wallet, worker and miner names, IP and MAC addresses and secrets.
-- **Your password stays yours:** stored as PBKDF2-HMAC-BLAKE2b-512 (the SC Lite's own hash), the same for
-  the panel and SSH; changing the username or password needs the current password.
-- **Updates without an SD card**, with automatic roll-back if the new version doesn't start properly.
+## Flashing
 
-<table>
-<tr><td width="70%"><img src="docs/screenshots/presets.png" alt="Presets"></td>
-<td width="30%"><img src="docs/screenshots/phone.png" alt="The panel on a phone, light theme"></td></tr>
-<tr><td>Presets built and tested by the tuner, each with its own fan curve</td><td>Works on a phone, light or dark</td></tr>
-</table>
+Write the `.img` (or `.img.xz`) to a microSD card with balenaEtcher and use Goldshell's normal SD
+burn procedure. The image keeps Goldshell's burn format byte for byte except inside the system
+filesystem. That format has no signature, only a CRC32 over the container header, which is
+unchanged. To go back, flash the stock image the same way.
 
----
+After it boots: open `http://<miner-ip>/` (or `:8080`), sign in with `admin` / `admin` and set a new
+password. Each miner gets its own password, and the same username and password sign in over SSH
+(`ssh admin@<miner-ip>` before the first change also asks for a new password). The agent finds Goldshell's internal web password on its own
+(the factory `123456789`, or `admin` on older units). Then add a pool in the Pools tab: on a fresh unit
+the miner only starts once a pool exists.
 
-## The control panel
+To flash: write the image to a microSD card, power the miner off, insert the card, power on. Red and
+green blink while it writes (about 2 minutes); when only green blinks it's done. Pull the card and the
+miner reboots into the new firmware.
 
-Open `http://<miner-ip>/` in any browser (also on port 8080, and https on 443).
+## What changes
 
-| Tab | What it does |
-|---|---|
-| **Dashboard** | live hashrate (the boards' own figures, no lag after a restart), power and J/TH, temperatures, fans and shares; 24-hour hashrate chart with restarts, setting changes and rejected shares marked; per-chip map of all 184 chips; per-board cards; best-share record |
-| **Controls & fan** | clock and board voltage (PV 9100–9600, the range the supply really delivers); auto fan with curves down to 10 % (built-in, your own and tuner-made, all editable); fan pair offset for quieter fans; Goldshell's fan check fitted to your own fans; thermal guard; chip trims (by hand, auto-trim, find strong chips, ⤓ Save report) |
-| **Presets** | saved clock, voltage and fan settings, applied in one click; built-in Stock and Idle |
-| **Schedule** | paint presets onto a week in half-hour blocks (cheap and expensive hours, quiet nights); scheduled restarts (each one reboots the miner) |
-| **Pools** | add, edit, reorder and remove pools; the pool guard watches that the miner only mines to these |
-| **Tuner** | maps clock against board voltage, confirms the best setting, can trim weak chips, builds tested presets; a live run plan shows every step |
-| **Log** | live miner log, colour-coded; optional verbose mode with every share and the pool's answer; save the logs, or a copy with private details taken out |
-| **Settings** | firmware update and roll back, username and password, SSH, network and MAC address, power calibration with a wall meter, time zone and time servers, notifications, restart and reboot (on this firmware Restart mining reboots the miner too), an automatic restart when a board stops hashing |
-
-### Dashboard
-
-![Per-chip map of all four boards](docs/screenshots/chip-map.png)
-
-Every chip of every board, shaded by its hardware errors; weak chips stand out and each one shows its own
-numbers on hover. The board cards give each board's hashrate, clock, voltage, temperatures and chips found.
-
-<table>
-<tr><td width="50%"><img src="docs/screenshots/boards.png" alt="Board cards"></td>
-<td width="50%"><img src="docs/screenshots/hashrate.png" alt="24-hour hashrate and rejected shares"></td></tr>
-</table>
-
-### Controls & fan
-
-![Clock and voltage](docs/screenshots/clock-voltage.png)
-
-Clock in 12.5 MHz steps and board voltage (PV) in the range the supply really follows, with an estimate
-of the watts at every setting. While a preset or the schedule is in charge, the controls are locked so
-nothing fights over the miner.
-
-![Fan curve editor](docs/screenshots/fan-curves.png)
-
-Drag points to shape a curve, test it with the temperature slider, and keep your own curves next to the
-built-in ones. The **thermal guard** sits on top of every curve: at the safety temperature (88 °C by default,
-two readings in a row) the fans go to 100 %; if a board is still that hot 90 seconds later, or 5 °C past it,
-the miner goes to Idle to cool down and tells you why.
-
-### Schedule
-
-![Weekly schedule](docs/screenshots/schedule.png)
-
-Paint presets onto the week: full power at night, a lower-power preset during expensive hours, a quiet one
-at weekends. Restarts can be scheduled too: on this firmware a restart reboots the whole miner (1–2 minutes).
-
-### Tuner
-
-![Tuner set-up](docs/screenshots/tuner.png)
-
-The tuner tests real settings on your miner, one after another, and keeps what passes:
-
-1. **Baseline:** a run at stock settings learns every chip's normal error rate.
-2. **Map:** each clock (in 12.5 MHz steps) starts at the lowest board voltage and steps up until it runs
-   clean for the whole test. Each next clock starts where the one before passed, so nothing is tested twice.
-   A chip that throws errors far beyond its own baseline fails the test, not the board's average.
-3. **Trims (optional):** when one chip fails a test, the tuner can slow just that chip and try again instead
-   of raising the voltage for all 46.
-4. **Confirm:** the best settings run again for longer; the winner is the one that holds.
-5. **Presets:** High, Middle, Low and Lowest power are built from the map and tested, each with its own fan curve.
-
-Stop puts everything back as it was, including any trims the run made. A watchdog ends a run that stops
-moving and restores the miner.
-
-### Notifications
-
-![Notifications](docs/screenshots/notifications.png)
-
-Telegram, Discord, ntfy, Gotify or a webhook: a miner stops answering, a board stops hashing, a fan fails,
-it got too hot, the thermal guard stepped in, a chip turned weak, a tuning run finished, a firmware update was
-installed or rolled back, a new best share, and more. Each event can be switched on or off.
-
-### Log and updates
-
-<table>
-<tr><td width="50%"><img src="docs/screenshots/log.png" alt="Live miner log"></td>
-<td width="50%"><img src="docs/screenshots/firmware-update.png" alt="Firmware update"></td></tr>
-</table>
-
----
-
-## Chip trims
-
-Each SC Lite hash board has 46 chips. Normally every chip runs at its board's clock, so the whole board ends
-up set for its weakest chip. A **chip trim** runs one chip at a different clock from the rest of its board
-(Controls & fan → Chip trims):
-
-- **slower (−12.5 to −100 MHz)** for a chip that makes more errors than the others, so the rest of the board
-  can run faster or at a lower voltage;
-- **faster (+12.5 to +50 MHz)** for a strong chip with headroom, never above the clock ceiling.
-
-**How it works.** Goldshell's mining program already has a per-chip clock function and keeps a clock for every
-chip, but always sets them all to the board clock; its own per-chip tuning code is never called. The firmware
-adds a 34-byte hook, placed in that unused code, which calls a small library right after each clock change.
-The library sets the trimmed chips using the program's own per-chip function, ramping them in small steps.
-With trims switched off, the same copy runs without the library: Goldshell's program plus two small guards
-(a board that answers with 0 chips, and bad input from a pool, no longer stop all four boards). If that
-copy fails to start three times in a row, the firmware falls back to Goldshell's unmodified program by
-itself.
-
-![Chip trims in Controls: one row per board, opened to show the chip pairs in blue boxes](docs/screenshots/chip-trims-pairs.png)
-
-**Chip pairs.** The board voltage (PV, about 9.4 V) runs through **23 power stages in series**, two chips side
-by side in each (about 0.41 V per stage). A test by christhealien on his own miner showed which two share a
-stage: with chips 2, 6, 10 … slowed, the whole board made slightly less good work, except the chip just before
-each slowed one, which kept its rate because it got the voltage its partner gave up. That points to pairs
-**1–2, 3–4, 5–6 …**, shown as blue boxes, and three self-tests on his miner later confirmed it (see
-[Measured data](#chip-trims-1)). A − trim gives a chip's partner a small boost; a + trim takes a little from it.
-
-**Helpers:**
-
-- **Auto-trim** watches each chip's errors and slows a board's worst chips one step at a time, undoing any
-  step that doesn't help. It trims **at most one chip per pair**, and stops adding trims to a board whose
-  untrimmed chips start erroring more (then raising PV a step is the better fix).
-- **The tuner** can trim the chip that fails a test instead of raising the board voltage, also one per pair.
-- **Find strong chips** raises up to 10 of a board's cleanest chips +12.5 MHz at a time, up to +50, never
-  both chips of one pair, and keeps what passes.
-
-**The self-tests** (v1.4.2 to v1.5.20) switched test trims on and off every 15 minutes for hours and compared
-each chip with itself, trims on against trims off. They settled that a trim reaches the chip it names and that
-chips 1–2, 3–4 … share a power stage (results under [Measured data](#chip-trims-1)), so they were removed in
-v1.5.21. Updating during a test puts your own trims back.
-
-**⤓ Save report** on the Chip trims card saves one file with the trims, every chip's clock, nonce counts and
-errors, 48 hours of history, the library's log, auto-trim and Find strong chips: send it in for a look.
-
----
-
-## Measured data
-
-### One miner, mapped by the tuner
-
-![Hashrate, lowest clean PV and estimated efficiency per clock](docs/screenshots/tuner-curve.png)
-
-A 13-hour tuner run on one SC Lite (all four boards, 70–73 °C). Each clock is shown at the lowest board
-voltage it ran clean at for 25 minutes:
-
-| Clock (MHz) | Lowest clean PV (mV) | Hashrate (TH/s) | Fans |
-|---:|---:|---:|---:|
-| 525 | 9100 | 3.86 | 28 % |
-| 550 | 9100 | 4.01 | 31 % |
-| 575 | 9100 | 4.23 | 33 % |
-| 600 | 9100 | 4.41 | 34 % |
-| 625 | 9150 | 4.57 | 36 % |
-| 650 | 9300 | 4.73 | 40 % |
-| 675 | 9350 | 4.95 | 44 % |
-| 700 | 9450 | 5.14 | 49 % |
-
-Up to 600 MHz this miner ran clean at the supply's lowest voltage. Above that, one board (board 3) set the
-voltage for all four, and 575–700 MHz used a few chip trims on that board. Your miner will differ: that's what
-the tuner is for.
-
-### Board voltage
-
-Measured with a multimeter on the supply rail:
-
-- Only the board voltage setting (**PV**) moves the supply. It follows PV to within about 10 mV between a floor
-  of about **9.1 V** and a ceiling of **9.6 V**; lower or higher settings are ignored.
-- The run-voltage setting (mV) is applied briefly at start and then replaced by PV.
-- The miner's own voltage reading sits about 50–80 mV below the rail.
-
-### Chip trims
-
-- Real hardware, two self-test runs at −50 MHz: the trimmed chips slowed by **5.2 % ± 3.0**, and the chips
-  beside them didn't change (the clock change predicts 8 %, a difference that isn't statistically significant).
-- On a real SC Lite, the miner's per-chip error list and the hook number the chips the same way, and the
-  per-chip nonce counts match chip for chip.
-- **Chip pairs, christhealien's SC Lite (625 MHz, PV 9100):** three self-tests agree on pairs 1–2, 3–4 …
-
-  | Test | Result |
-  |---|---|
-  | Trim reaches its chip (c2, c6 … at −50 MHz) | passed; the chip *before* each kept its rate (+0.3 %) while the rest of the board dipped 11 % |
-  | Check the chip pairs (c1, c5 …) | confirmed; the chip *after* each kept its rate (−0.4 %) while the rest dipped 10 % (4.5 standard errors) |
-  | Pair layout across the board (12 h) | blue-box partners +9.4 % against the rest (11.8 standard errors); one chip off +2.6 %; across the halves −0.7 % |
-  | Check the chip pairs, again (v1.5.20) | confirmed; the chip *after* each +1.7 % while the rest dipped 6.5 % |
-  | Both chips of a pair (c1+c2, c9+c10 …) | the rest of the board dipped **16.4 %**, against 6.5 % with the same 12 chips spread one per pair |
-
-  Slowing chips takes good work from every other chip, and **trimming both chips of a pair costs the rest of
-  the board clearly more** than spreading the same trims one per pair (16.4 % against 6.5 %, 6 standard
-  errors). So: one trim per pair where you can, and on a miner near its voltage floor raise PV a step instead of
-  adding trims.
-
----
-
-## Compared with stock
-
-| | Stock 2.2.0 | sclite firmware |
+| | stock | this build |
 |---|---|---|
-| Web panel | Goldshell UI on port 80 | new panel on 80, 8080 and https 443 |
-| Goldshell backend and miner API (4028) | open to the network | reachable only from inside the miner |
-| Goldshell cloud | on (hub.goldshell.com) | cut off |
-| Login | shared default password | `admin` / `admin`, then you must choose a new one; stored as PBKDF2-HMAC-BLAKE2b-512; changing it needs the current password |
-| Internet check | every 3 s: your pool's host (a DNS lookup each time), then www.baidu.com and www.google.com | asks the panel on the miner (127.0.0.2); the pools only if that fails; no outside hosts |
-| Pool redirects | a pool can move the miner to another server | refused; the pool guard removes any pool that isn't in your Pools tab |
-| Wi-Fi, mDNS, test programs | installed | removed (the board has no Wi-Fi chip) |
-| SSH | none | built in on port 22, using the panel's username and password (shell, `sftp`, and `scp` from OpenSSH 9 or later) |
-| Time sync | servers in China, time zone fixed to China | your own time server and your router's (DHCP); pool.ntp.org only when neither gives a time (can be switched off); works without internet; time zone from your browser |
-| MAC address | random at every boot on some units (the board can't store it) | kept the same by default; or random each boot, or one you choose |
-| Tuning | fixed power plans | auto-tuner, presets, schedule, per-chip trims |
-| Fans | fixed modes | curves down to 10 %, fan pair offset, thermal guard with a cool-down |
-| Updates | SD card | from the panel, with automatic roll-back |
+| Control panel | Goldshell web UI on :80 | sclite agent on **:8080**, also on :80 (the LAN address) and https on :443; :8080 and :80 take both http and https. SSH on :22 (same account) |
+| Goldshell web API (minerd) | :80 on the LAN | 127.0.0.1:80, only the agent can reach it |
+| cgminer API (intminer) | :4028 on the LAN (`A:0/0`) | 127.0.0.1:4028 |
+| Goldshell cloud | MQTT to hub.goldshell.com, reports to find.goldshell.com | both hostnames resolve to 127.0.0.1 |
+| Wi-Fi | wifi daemon, hostapd, wpa_supplicant, dnsmasq | removed (no Wi-Fi chip on this board) |
+| mDNS | avahi-daemon on the LAN | removed |
+| Time zone | fixed to China (UTC+8) in `/etc/localtime` | `/etc/localtime` links to `/usr/config/sclite/localtime`, which the panel writes (the browser's zone on first sign-in, or Settings → Time); Goldshell's file is kept as `/etc/localtime.stock` |
+| NTP | 4 clients, 2 on hardcoded servers in China | 1 loop (`/usr/libexec/sclite/ntp`): the servers set in Settings → Time, then the ones the router hands out by DHCP (option 42, which `dhcpcd` already requests; `/libexec/dhcpcd-hooks/40-sclite-ntp` saves them); pool.ntp.org only when those give no time (it can be switched off in Settings → Time). Names are passed to `ntpd -q` only once a name resolves (BusyBox 1.21 ntpd gives up for good when any server name doesn't). Re-synced hourly; after 6 failures in a row, retried every 5 min; works on a LAN without internet |
+| Per-chip clocks | the board clock for every chip | optional chip trims (Controls & fan → Chip trims, off by default): a second copy of intminer, `/usr/libexec/sclite/hook/intminer`, with a hook at the end of its clock-change function (`files/patch_intminer.py`, 4 + 30 bytes, every original byte checked; the cave sits in the never-called DTFS code), and `/lib/sclite_chip.so`, which sets trimmed chips with the miner's own per-chip clock function and writes per-chip counters to `/tmp/sclite-chipstats.json`. The same copy carries two guards (`patch_divzero.py`: a board that answers 0 chips no longer crashes the miner; `patch_poolinput.py`: a tiny pool difficulty or an endless pool line no longer does) and is the miner the wrapper runs: with the trim library while `/usr/config/sclite/chiphook` exists, without it otherwise. After 3 starts in a row that never get mining going, the wrapper runs the stock miner (`/usr/libexec/sclite/intminer`). Save report downloads the trims, counters, their 48-hour history, the hook log, auto-trim and the strong-chip test as one JSON file. (The self-tests that proved a trim reaches its chip and the chip pairs ran from v1.4.2 to v1.5.20 and were removed in v1.5.21.) |
+| Verbose share log | config key the firmware drops | `-D -P` added by the intminer wrapper while the agent's flag is set (the miner prints its per-share lines only at debug level); survives restarts and reboots |
+| SSH | none (no SSH server; shared host keys left in the image) | built into the agent on **:22**: signs in with the panel username and password, forced password change on first sign-in, shell + exec + SFTP, host key made per unit; on/off and port in Settings. The leftover shared host keys are removed |
+| MAC address | `maccfg` sets eth0 from the u-boot environment (`/dev/env`); on boards where that area is empty it fails and the network chip starts with a different address at every boot | `/etc/sclite-mac`, run by `S40network` right after `maccfg`: keeps the address in `/usr/config/sclite/mac` (saved from eth0 on the first boot), or a new random one each boot, or one typed in Settings → Network & SSH. Only a valid unicast address is ever set; nothing MAC-related is in the image, so every unit keeps its own |
+| Internet check | xminerd kills/restarts the miner unless a pool host or www.baidu.com / www.google.com:80 answers, checked every 3 s, pools first (a pool named by host name was looked up in DNS, forwards and backwards, every 3 s) | both fallback hosts are replaced in the binary by 127.0.0.2:80, where the agent answers, and that is tried first; the pools only if it fails. No outside host, no DNS: mining doesn't depend on the internet |
+| Fan check (xminerd) | the first reading at a new fan level becomes that level's reference, even from a fan that is already dead or still spinning down | kept, but a reading is stored only when the fan passed (`patch_xminerd.py` p1, 10 bytes, original bytes checked) |
+| Pools | whatever the config says | the miner always starts with `--no-pool-redirect` (a pool can't move it to another server); the agent's pool guard removes any pool or account that isn't in the Pools tab from the running miner (Idle if it keeps coming back); the factory Litecoin config `/root/settings/qomo.json` (someone else's pools, unused) is removed |
+| Serial console (UART) root | published Goldshell factory password (`root123`) — the same on every stock unit | replaced with a port recovery password: sign in as **`root`** / **`sclite-recover`**. Serves as the owner's physical way back in (the UART is inside the miner; no network service reads `/etc/shadow`). Separate from the panel/SSH password — changing that does not change this, and this does not work over SSH or the web panel |
+| `default` / `goldshell` accounts | `default` has an empty password, `goldshell` = "goldshell" (serial console) | both locked |
+| SD / USB auto-mount | normal | `nosuid,nodev` (the SD upgrade path still works) |
 
----
+How the ports are closed: the kernel has no netfilter, so there's no firewall to use. Instead
+`files/sclite_bind.c` (a 2 KB library with no libc of its own) is loaded into minerd (from inittab)
+and intminer (by the wrapper). It turns their TCP listening sockets into loopback ones. UDP and
+outgoing connections are untouched.
 
-## Install
+`files/intminer_wrap.c` replaces `/usr/bin/intminer`. The stock miner moves to
+`/usr/libexec/sclite/intminer`, so the running process keeps its name, and the wrapper keeps
+argv[0] as `/usr/bin/intminer`, because minerd recognises the miner by its command line.
 
-1. Download the `.img.xz` and `SHA256SUMS` from the release and check the image:
-   `sha256sum -c SHA256SUMS --ignore-missing` (macOS: `shasum -a 256 <file>.img.xz`,
-   Windows: `certutil -hashfile <file>.img.xz SHA256`, and compare with its line in `SHA256SUMS`). It must
-   say `OK` (or match); if not, download it again.
-   Write the `.img.xz` to a microSD card with **balenaEtcher**. Other tools need it unpacked first with
-   `xz -dk` or 7-Zip.
-2. Miner **off**, insert the card, power **on**.
-3. Red and green blink while it writes (about 2 min). When **only green blinks**, pull the card; the
-   miner reboots by itself.
-4. Open `http://<miner-ip>/`, sign in with `admin` / `admin`, set your password and read the risk
-   notice. The same username and password work for SSH: `ssh <username>@<miner-ip>`.
-5. Add your pool in the **Pools** tab. Mining starts within about a minute.
+The agent stores its settings on the config partition (`/usr/config/sclite`). The SD card is only
+for flashing.
 
-### Upgrading (no SD card)
+## Update packages (Settings → Firmware update)
 
-From v1.4.8 on, a new release installs from the panel: **Settings → Firmware update**, then either
-**Check for updates** (the miner gets the latest release from GitHub itself) or choose the release's
-`sclite-update-v….tar.gz` file and **Check file**, which works without internet (you can paste the
-release's SHA256SUMS to confirm it's the published file). Then **Install**. Your settings, pools, presets
-and schedule stay (except once, coming from v1.5.5 or earlier: see below). The miner reboots into the new
-version, and if that doesn't start properly it goes back to the previous one by itself. Getting v1.4.8 or
-later onto v1.4.4 or earlier takes one SD flash.
+`build.py --version 1.4.8 --update-out sclite-update-v1.4.8.tar.gz` also writes an update package: a
+gzipped tar of `manifest.json` and `files/<path>` for every file the build adds or changes against stock,
+plus the stock paths it removes. The panel installs it over any earlier sclite build without an SD card:
 
-**Upgrading from v1.5.5 or earlier (to v1.5.6 or later) starts tuning fresh, once.** Presets made by those
-versions were judged with a hashrate reading that lagged (fixed in v1.5.5) and with voltage settings the
-supply ignores, so on its first start the new version moves your presets aside (into a backup file), puts the
-miner back on its stock settings, switches off a schedule that used presets, and sets auto fan back to the
-balanced curve if it followed a preset. Pools, password, network, fan settings and everything else stay.
-Settings → Firmware update shows what was done and has a button to put the old presets back. Then run the
-Tuner to build new ones.
+- **Checked first:** every file against its sha256 and size, nothing extra, no path on the config
+  partition or in /proc, /sys, /dev, /tmp; and a base check (the stock miner every sclite build keeps
+  at `/usr/libexec/sclite/intminer`), so a package for another miner or Goldshell version is refused.
+  Packages are not signed: anyone can build and install their own.
+- **Writable for the install:** the system partition is mounted read-only (Goldshell's inittab), so the
+  panel remounts `/` read-write for an install or a roll back and read-only again after; S48sclite does
+  the same for a boot-time roll back.
+- **Backed up:** the current version of every path it touches goes to `/usr/config/sclite/update/backup.tgz`
+  (paths relative to /, so BusyBox tar can restore them), with `created` and `created_dirs` listing what
+  it adds. Then a `pending` marker, then each file is written beside its target and renamed over it,
+  or, when the partition hasn't room for both copies, written after the old one is removed; each is read
+  back and checked. Any error restores the backup.
+- **Room for the agent:** the agent is ~10 MB and the system partition has ~4 MB free, and a running
+  program's file keeps its blocks until it ends. So when a package replaces the agent, the panel copies
+  itself to /tmp (RAM) and execs that copy with `-install-update`, which installs and reboots (or, on
+  failure, restores the backup and exits; S48sclite's loop starts the old panel again).
+- **Confirmed or rolled back:** after the reboot, the new panel confirms once it has run for 90 s. Until
+  then `S48sclite` restores the backup and reboots if the panel isn't up within 5 minutes, or on the 4th
+  boot. *Roll back* in the panel leaves a `rollback` marker and reboots; S48sclite restores the backup
+  before the panel starts.
+- `tools/test-update.sh A.img update-B.tar.gz agent-A agent-B` runs the whole flow on a loop-mounted copy
+  of image A's system partition (its real size), with RAM /tmp, the image's own boot script and its own
+  network namespace: install from A's panel, boot B, B confirms, roll back from B's panel, boot A, fsck.
+- Installing the package over v1.0.0 through v1.4.4 gives exactly the same system files as flashing the
+  image, and rolling back gives exactly the files from before (checked file by file).
 
-**Passwords from v1.5.22 on.** Your password keeps working: it moves to the new format
-(PBKDF2-HMAC-BLAKE2b-512) the first time you sign in once the update is confirmed. Versions before v1.5.22
-can't read that format, so **Roll back to the previous version**, or installing an older release's update
-package, asks for your password once and saves it the old way. An older release flashed from an SD card
-finds no password it can read and starts over at `admin` / `admin`.
+The panel's https certificate is made on the miner's first start (`/usr/config/sclite/tls.crt`), unique to
+each unit. It's self-signed, so browsers warn once. The agent binds port 80 on each LAN address rather
+than on all addresses, because minerd holds 127.0.0.1:80, and follows DHCP changes.
 
-v1.4.5 and v1.4.6 were withdrawn: their panel didn't start. If you flashed one, flash the latest release
-from an SD card.
+## Not changed (and why)
 
-The full steps, troubleshooting and how to go back to stock are in the
-[release notes](../../releases/latest).
-
-### Build from source
-
-The release includes the control panel's source (Go) and the build kit, which turns Goldshell's stock
-2.2.0 image into the sclite image. It only accepts the known stock image and checks every edit. Every
-release is checked to rebuild byte for byte from its published source (with the Go version named in the
-release notes: another Go version builds a different panel binary). See the release notes for the
-commands. The build needs the stock `.img` from the stock-2.2.0 release.
-
-## Stock firmware 2.2.0
-
-To go back to stock, or to build this firmware yourself, get Goldshell's original image from the
-**[stock-2.2.0 release](https://github.com/booozytheclown/goldshell-sclite-firmware/releases/tag/stock-2.2.0)**
-(`burn-Goldshell-SCLITE_MCB_V4_3-2.2.0.tgz`, SHA-256 `1c84eebc9ca1b75e69cb729f64f6fb7dbc59a30bd8ee42049e6186de145eb433`).
-Unpack it and flash the `.img` inside the same way as this firmware.
-
-## Research
-
-- Reverse engineering of the stock firmware (embedded Linux, InfoTM "+ius" burn container, ext2 system
-  filesystem).
-- Firmware validation and upgrade: the SD burn image has no signature, only a CRC32 over the container
-  header.
-- Fan control, thermal management, and clock and voltage behaviour (see [Measured data](#measured-data)).
-- Per-chip clocking and the boards' power stages (see [Chip trims](#chip-trims)).
-
-Contributions are welcome: open an Issue for findings or a Pull Request for documentation and tools.
-Chip reports from **Controls & fan → Chip trims → ⤓ Save report** are especially welcome.
-Please don't publish passwords, private keys, device credentials or personal information.
-
-## Disclaimer
-
-This project is independent and is not affiliated with or endorsed by Goldshell. Goldshell's firmware
-and documentation remain subject to their respective intellectual property rights.
-
-Modifying and flashing firmware carries risks, including hardware damage and device failure. Nothing here
-is guaranteed safe, authentic or fit for production hardware. Use at your own risk.
+- **Kernel (Linux 3.10, InfoTM vendor build) and C library (uClibc 0.9.33.2):** Goldshell's
+  closed-source binaries (minerd, intminer, xminerd, fanctrl) are built against them, and there is
+  no vendor kernel source.
+- **OpenSSL 1.0.1e, curl 7.33, BusyBox 1.21:** old. With the cloud cut off and only the agent
+  listening on the LAN, nothing reachable from the network uses them. Updating them is a possible
+  second phase.
+- **minerd** stays: the agent uses its `/mcb` and `/dbg` API to set clocks, voltages, fans and
+  pools.
