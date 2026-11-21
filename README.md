@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/christhealien/sclite-community-firmware/releases/latest"><img alt="version 1.5.29" src="https://img.shields.io/badge/version-1.5.29-e3b341?style=flat-square"></a>
+  <a href="https://github.com/christhealien/sclite-community-firmware/releases/latest"><img alt="version 1.5.30" src="https://img.shields.io/badge/version-1.5.30-e3b341?style=flat-square"></a>
   <img alt="platform: SC Lite" src="https://img.shields.io/badge/platform-SC%20Lite-1f6feb?style=flat-square">
   <img alt="cloud: removed" src="https://img.shields.io/badge/cloud-removed-d29922?style=flat-square">
   <img alt="runs offline" src="https://img.shields.io/badge/runs-offline-8957e5?style=flat-square">
@@ -94,7 +94,7 @@
 
 ## Quick start
 
-1. Download `sclite-firmware-v1.5.29-SCLITE_MCB_V4_3.img.xz` and `SHA256SUMS` from the
+1. Download `sclite-firmware-v1.5.30-SCLITE_MCB_V4_3.img.xz` and `SHA256SUMS` from the
    [latest release](https://github.com/christhealien/sclite-community-firmware/releases/latest) and check it:
    `sha256sum -c SHA256SUMS --ignore-missing` must say `OK` (macOS: `shasum -a 256 <file>`, Windows:
    `certutil -hashfile <file> SHA256`, and compare with its line in `SHA256SUMS`).
@@ -112,19 +112,28 @@ Already running this firmware (v1.4.8 or later)? Skip the SD card and [update fr
 > [!IMPORTANT]
 > **Flashing may reset the miner's settings.** Keep your pool address and worker name handy.
 
-## What's new in v1.5.29
+## What's new in v1.5.30
 
-No change to mining, clocks, voltages or fans.
+Small fixes to the tuner, the update panel and the presets. No change to how the miner mines, to clocks, voltages
+or the default fan behaviour.
 
-- **Softer light theme:** a warm grey background instead of pure white, with softer text and panels. The
-  dark theme is unchanged.
-- **Fixed chip and board shading in the light theme:** the middle shades of the chip map had labels you
-  couldn't read. Every step is now distinct, with readable numbers.
-- **Darker status colours** in the light theme, for better contrast.
+- **Tuner, presets:** a preset with the same clock and voltage as one already built isn't saved a second time
+  (a narrow clock range could make two presets the same setting).
+- **Tuner, `results.csv`:** a test that failed now shows the fan the hold held (it showed 0 %), and the cell
+  stays empty when the fans weren't held.
+- **Tuner, chip map:** hovering a chip shows the same box as on the Dashboard: its new errors in this test, its
+  limit and how much of it was used, and a red or green verdict.
+- **Presets:** after **Apply** the list keeps refreshing until the miner runs the preset (up to a minute), so it is
+  marked "on the miner" without pressing it again.
+- **Firmware update:** the line from the release's `SHA256SUMS` can be pasted next to the file before **Check
+  file**; it is compared as soon as the file is checked.
+- **Under the hood:** the check of which addresses may connect (the panel and SSH) is now one function; it behaves
+  as before: IPv4 is never filtered, IPv6 only from your own network.
 
-Recently: **vendor-neutral wording** throughout the panel, logs and docs, and a new README and logo
-(v1.5.28); an **update progress bar** that follows the install across the restart (v1.5.27); the SD image no
-longer ships the factory random seed that was the same on every unit (v1.5.27).
+Recently: a **softer light theme** with readable chip and board shading (v1.5.29); **vendor-neutral wording**
+throughout the panel, logs and docs, and a new README and logo (v1.5.28); an **update progress bar** that follows
+the install across the restart (v1.5.27); the SD image no longer ships the factory random seed that was the same
+on every unit (v1.5.27).
 Every release has its own notes on the [releases page](https://github.com/christhealien/sclite-community-firmware/releases).
 
 ## Updating
@@ -142,7 +151,7 @@ flowchart LR
 ```
 
 - **Check for updates** gets the latest release from GitHub and compares it with the release's `SHA256SUMS`.
-  **Check file** works without internet: choose `sclite-update-v1.5.29.tar.gz` (not the `.img.xz`), and paste
+  **Check file** works without internet: choose `sclite-update-v1.5.30.tar.gz` (not the `.img.xz`), and paste
   the release's `SHA256SUMS` to confirm it's the published file.
 - **Install** shows each stage with a progress bar, also on the Dashboard while the miner restarts, and says
   how it went once the miner answers again.
@@ -168,9 +177,9 @@ flowchart LR
 
 | Release file | What it is for |
 |---|---|
-| `sclite-update-v1.5.29.tar.gz` | Update from the panel, over v1.4.8 or later (not for the SD card) |
-| `sclite-firmware-v1.5.29-SCLITE_MCB_V4_3.img.xz` | First install, or recovery, from a microSD card |
-| `sclite-firmware-v1.5.29-source.tar.gz` | The source: the control panel (Go) and the build kit |
+| `sclite-update-v1.5.30.tar.gz` | Update from the panel, over v1.4.8 or later (not for the SD card) |
+| `sclite-firmware-v1.5.30-SCLITE_MCB_V4_3.img.xz` | First install, or recovery, from a microSD card |
+| `sclite-firmware-v1.5.30-source.tar.gz` | The source: the control panel (Go) and the build kit |
 | `SHA256SUMS` | SHA-256 of the files above |
 
 ## How it works
@@ -375,13 +384,13 @@ firmware. You need **Go 1.24.7 exactly** (another version builds a different pan
 build needs no downloads.
 
 ```sh
-tar xzf sclite-firmware-v1.5.29-source.tar.gz && cd sclite-firmware
+tar xzf sclite-firmware-v1.5.30-source.tar.gz && cd sclite-firmware
 # 1. the panel
 cd agent && CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -trimpath -buildvcs=false -ldflags="-s -w" -o ../sclite-agent-arm . && cd ..
 # 2. the image and the update package
 python3 firmware-kit/build.py --stock burn-…-SCLITE_MCB_V4_3-2_2_0.img \
-        --agent sclite-agent-arm --out sclite-firmware.img --version 1.5.29 --xz \
-        --update-out sclite-update-v1.5.29.tar.gz
+        --agent sclite-agent-arm --out sclite-firmware.img --version 1.5.30 --xz \
+        --update-out sclite-update-v1.5.30.tar.gz
 ```
 
 The build only accepts the known stock image and checks every edit. It reads every written file back and starts
